@@ -46,7 +46,7 @@ func main() {
 	var mejorPalabra string
 	var mejorCountMax int
 
-	for numCPUsToUse := 1; numCPUsToUse <= runtime.NumCPU()*4; numCPUsToUse++ {
+	for numCPUsToUse := 1; numCPUsToUse <= runtime.NumCPU(); numCPUsToUse++ {
 		inicio := time.Now()
 		wordCounter := counter.NewWordCounter(numCPUsToUse)
 		wordFreq := wordCounter.CountWordFrequency(content)
