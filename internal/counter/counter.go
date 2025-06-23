@@ -266,19 +266,28 @@ func (wc *WordCounter) sequentialReduceMaps(maps []map[string]int) map[string]in
 		return make(map[string]int)
 	}
 
-	// Estimar el tamaño total del mapa
-	totalSize := 0
-	for _, m := range maps {
-		totalSize += len(m)
+	if len(maps) == 1 {
+		return maps[0]
 	}
 
-	// Inicializar con una capacidad aproximada
-	result := make(map[string]int, totalSize/2)
+	// Encontrar el mapa más grande para reducir inserciones
+	largestMapIdx := 0
+	for i := 1; i < len(maps); i++ {
+		if len(maps[i]) > len(maps[largestMapIdx]) {
+			largestMapIdx = i
+		}
+	}
 
-	// Combinar todos los mapas
-	for _, m := range maps {
-		for word, count := range m {
-			result[word] += count
+	// Usar el mapa más grande como base para el resultado
+	// Esto es más eficiente que crear un nuevo mapa y hacer todas las inserciones
+	result := maps[largestMapIdx]
+
+	// Combinar todos los mapas excepto el más grande (que ya es result)
+	for i, m := range maps {
+		if i != largestMapIdx {
+			for word, count := range m {
+				result[word] += count
+			}
 		}
 	}
 
