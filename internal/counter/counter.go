@@ -163,20 +163,124 @@ func (wc *WordCounter) CountWordFrequency(input string) map[string]int {
 		}(startIndex, endIndex)
 	}
 
-	// Cerrar el canal cuando todas las goroutines terminen
+	// Recolectamos todos los mapas locales primero
+	var allMaps []map[string]int
+
 	go func() {
 		wg.Wait()
 		close(wordFreqChan)
 	}()
 
-	// Consolidar todos los conteos en un solo mapa
-	// Preasignamos una capacidad estimada para el mapa final
-	finalWordFreq := make(map[string]int, len(words)/2)
+	// Recolectar todos los mapas en memoria
 	for localFreq := range wordFreqChan {
-		for word, count := range localFreq {
-			finalWordFreq[word] += count
+		if len(localFreq) > 0 { // Solo agregamos mapas no vacíos
+			allMaps = append(allMaps, localFreq)
+		}
+	}
+	// Si no hay mapas o solo hay uno, no necesitamos paralelizar
+	if len(allMaps) == 0 {
+		return make(map[string]int)
+	} else if len(allMaps) == 1 {
+		return allMaps[0]
+	}
+
+	// Implementar una reducción paralela de tipo Map-Reduce
+	return wc.parallelReduceMaps(allMaps)
+}
+
+func (wc *WordCounter) parallelReduceMaps(maps []map[string]int) map[string]int {
+	numMaps := len(maps)
+	if numMaps == 0 {
+		return make(map[string]int)
+	}
+
+	// Si tenemos pocos mapas o la cantidad de CPUs es baja, usar reducción secuencial
+	if numMaps <= 2 || wc.numCPUs <= 1 {
+		return wc.sequentialReduceMaps(maps)
+	}
+
+	// Calcular el nivel óptimo de paralelización
+	// Usamos un enfoque divide y vencerás
+	numReducers := wc.numCPUs
+	if numReducers > numMaps/2 {
+		numReducers = numMaps / 2
+		if numReducers < 1 {
+			numReducers = 1
 		}
 	}
 
-	return finalWordFreq
+	var wg sync.WaitGroup
+	resultChan := make(chan map[string]int, numReducers)
+
+	// Dividir los mapas en chunks para cada reducer
+	chunkSize := (numMaps + numReducers - 1) / numReducers
+
+	for i := 0; i < numReducers; i++ {
+		wg.Add(1)
+		startIdx := i * chunkSize
+		endIdx := (i + 1) * chunkSize
+		if endIdx > numMaps {
+			endIdx = numMaps
+		}
+
+		// No empezar una goroutine si solo hay un elemento
+		if endIdx-startIdx <= 1 {
+			if startIdx < numMaps {
+				resultChan <- maps[startIdx]
+			}
+			wg.Done()
+			continue
+		}
+
+		// Cada goroutine reduce un subconjunto de mapas
+		go func(start, end int) {
+			defer wg.Done()
+
+			// Reducir el subconjunto de mapas asignados a esta goroutine
+			subResult := wc.sequentialReduceMaps(maps[start:end])
+			resultChan <- subResult
+		}(startIdx, endIdx)
+	}
+
+	// Esperar a que todos los reductores terminen
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Combinar los resultados finales de forma secuencial
+	// Esta fase debe ser más rápida porque estamos combinando
+	// un número mucho menor de mapas (numReducers)
+	var finalResults []map[string]int
+	for result := range resultChan {
+		finalResults = append(finalResults, result)
+	}
+
+	// Última reducción secuencial de los resultados intermedios
+	return wc.sequentialReduceMaps(finalResults)
+}
+
+// sequentialReduceMaps combina varios mapas de forma secuencial
+func (wc *WordCounter) sequentialReduceMaps(maps []map[string]int) map[string]int {
+	if len(maps) == 0 {
+		return make(map[string]int)
+	}
+
+	// Estimar el tamaño total del mapa
+	totalSize := 0
+	for _, m := range maps {
+		totalSize += len(m)
+	}
+
+	// Inicializar con una capacidad aproximada
+	result := make(map[string]int, totalSize/2)
+
+	// Combinar todos los mapas
+	for _, m := range maps {
+		for word, count := range m {
+			result[word] += count
+		}
+	}
+
+	return result
 }
